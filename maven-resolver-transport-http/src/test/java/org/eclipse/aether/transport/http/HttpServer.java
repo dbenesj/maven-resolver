@@ -24,6 +24,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
@@ -85,7 +86,7 @@ public class HttpServer
 
     public enum ChecksumHeader
     {
-        NEXUS
+        NEXUS, XCHECKSUM, DIGEST
     }
 
     private static final Logger LOGGER = LoggerFactory.getLogger( HttpServer.class );
@@ -351,6 +352,14 @@ public class HttpServer
                     if ( checksumHeader == ChecksumHeader.NEXUS )
                     {
                         response.setHeader( HttpHeader.ETAG.asString(), "{SHA1{" + checksums.get( "SHA-1" ) + "}}" );
+                    }
+                    else if ( checksumHeader == ChecksumHeader.DIGEST )
+                    {
+                        response.setHeader( "Digest", "sha=" + Base64.getEncoder().encodeToString( ChecksumUtils.fromHexString( ( String ) checksums.get( "SHA-1" ) ) ) );
+                    }
+                    else if ( checksumHeader == ChecksumHeader.XCHECKSUM )
+                    {
+                        response.setHeader( "x-checksum-sha1", checksums.get( "SHA-1" ).toString() );
                     }
                 }
                 if ( HttpMethod.HEAD.is( req.getMethod() ) )
