@@ -33,6 +33,7 @@ import javax.inject.Named;
 import javax.inject.Singleton;
 
 import org.eclipse.aether.spi.io.FileProcessor;
+import org.eclipse.aether.util.ChecksumUtils;
 
 /**
  * A utility class helping with file-based operations.
@@ -259,4 +260,15 @@ public class DefaultFileProcessor
         }
     }
 
+    @Override
+    public String readChecksum( final File checksumFile ) throws IOException
+    {
+        return ChecksumUtils.read( checksumFile );
+    }
+
+    @Override
+    public void writeChecksum( final File checksumFile, final String checksum ) throws IOException
+    {
+        write( checksumFile, checksum );
+    }
 }

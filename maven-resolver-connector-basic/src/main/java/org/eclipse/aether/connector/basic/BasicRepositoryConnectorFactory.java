@@ -28,6 +28,7 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.spi.connector.RepositoryConnector;
 import org.eclipse.aether.spi.connector.RepositoryConnectorFactory;
+import org.eclipse.aether.spi.connector.checksum.ChecksumAlgorithmFactorySelector;
 import org.eclipse.aether.spi.connector.checksum.ChecksumPolicyProvider;
 import org.eclipse.aether.spi.connector.layout.RepositoryLayoutProvider;
 import org.eclipse.aether.spi.connector.transport.TransporterProvider;
@@ -51,6 +52,8 @@ public final class BasicRepositoryConnectorFactory
 
     private ChecksumPolicyProvider checksumPolicyProvider;
 
+    private ChecksumAlgorithmFactorySelector checksumAlgorithmFactorySelector;
+
     private FileProcessor fileProcessor;
 
     private float priority;
@@ -67,11 +70,14 @@ public final class BasicRepositoryConnectorFactory
 
     @Inject
     BasicRepositoryConnectorFactory( TransporterProvider transporterProvider, RepositoryLayoutProvider layoutProvider,
-                                     ChecksumPolicyProvider checksumPolicyProvider, FileProcessor fileProcessor )
+                                     ChecksumPolicyProvider checksumPolicyProvider,
+                                     ChecksumAlgorithmFactorySelector checksumAlgorithmFactorySelector,
+                                     FileProcessor fileProcessor )
     {
         setTransporterProvider( transporterProvider );
         setRepositoryLayoutProvider( layoutProvider );
         setChecksumPolicyProvider( checksumPolicyProvider );
+        setChecksumAlgorithmFactorySelector( checksumAlgorithmFactorySelector );
         setFileProcessor( fileProcessor );
     }
 
@@ -80,6 +86,7 @@ public final class BasicRepositoryConnectorFactory
         setTransporterProvider( locator.getService( TransporterProvider.class ) );
         setRepositoryLayoutProvider( locator.getService( RepositoryLayoutProvider.class ) );
         setChecksumPolicyProvider( locator.getService( ChecksumPolicyProvider.class ) );
+        setChecksumAlgorithmFactorySelector( locator.getService( ChecksumAlgorithmFactorySelector.class ) );
         setFileProcessor( locator.getService( FileProcessor.class ) );
     }
 
@@ -121,6 +128,20 @@ public final class BasicRepositoryConnectorFactory
     }
 
     /**
+     * Sets the checksum algorithm selector to use for this component.
+     *
+     * @param checksumAlgorithmFactorySelector The checksum algorithm selector to use, must not be {@code null}.
+     * @return This component for chaining, never {@code null}.
+     */
+    public BasicRepositoryConnectorFactory setChecksumAlgorithmFactorySelector(
+        ChecksumAlgorithmFactorySelector checksumAlgorithmFactorySelector )
+    {
+        this.checksumAlgorithmFactorySelector = requireNonNull(
+                checksumAlgorithmFactorySelector, "checksum algorithm factory selector cannot be null" );
+        return this;
+    }
+
+    /**
      * Sets the file processor to use for this component.
      *
      * @param fileProcessor The file processor to use, must not be {@code null}.
@@ -156,7 +177,8 @@ public final class BasicRepositoryConnectorFactory
         requireNonNull( "repository", "repository cannot be null" );
 
         return new BasicRepositoryConnector( session, repository, transporterProvider, layoutProvider,
-                                             checksumPolicyProvider, fileProcessor );
+                                             checksumPolicyProvider, checksumAlgorithmFactorySelector,
+                                             fileProcessor );
     }
 
 }
