@@ -99,6 +99,7 @@
   </dependencies>
 
   <build>
+    <finalName>${project.artifactId}-${project.version}-CW</finalName>
     <plugins>
       <plugin>
         <groupId>org.eclipse.sisu</groupId>

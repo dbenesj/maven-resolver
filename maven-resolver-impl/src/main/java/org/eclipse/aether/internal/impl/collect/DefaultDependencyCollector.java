@@ -38,6 +38,7 @@ import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.RequestTrace;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.ArtifactProperties;
+import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.collection.DependencyCollectionException;
@@ -94,6 +95,9 @@ public class DefaultDependencyCollector
     private ArtifactDescriptorReader descriptorReader;
 
     private VersionRangeResolver versionRangeResolver;
+    
+    private static final String BRANCH_GROUP_PREFIX = "branch.";
+    private static final String CW_GROUP_PREFIX = ".com.cogniware";
 
     public DefaultDependencyCollector()
     {
@@ -398,8 +402,39 @@ public class DefaultDependencyCollector
         }
         catch ( VersionRangeResolutionException e )
         {
-            results.addException( dependency, e, args.nodes );
-            return;
+            if ( dependency.getArtifact().getGroupId().startsWith( BRANCH_GROUP_PREFIX ) )
+            {
+                Artifact artWithoutBranch = new DefaultArtifact(
+                    dependency.getArtifact().getGroupId().substring(dependency.getArtifact().getGroupId().indexOf( CW_GROUP_PREFIX, BRANCH_GROUP_PREFIX.length()+1 )+1 ),
+                    dependency.getArtifact().getArtifactId(),
+                    dependency.getArtifact().getClassifier(),
+                    dependency.getArtifact().getExtension(),
+                    dependency.getArtifact().getVersion(),
+                    dependency.getArtifact().getProperties(),
+                    dependency.getArtifact().getFile()
+                    );
+                LOGGER.info( "Artifact from feature branch {} was not found, trying without the feature branch identifier: {}", dependency.getArtifact(), artWithoutBranch );
+                dependency = dependency.setArtifact(artWithoutBranch);
+                try
+                {
+                    VersionRangeRequest rangeRequest = createVersionRangeRequest( args, repositories, dependency );
+    
+                    rangeResult = cachedResolveRangeResult( rangeRequest, args.pool, args.session );
+    
+                    versions = filterVersions( dependency, rangeResult, verFilter, args.versionContext );
+                }
+                catch ( VersionRangeResolutionException e2 )
+                {
+                    LOGGER.error( "Didn't found requested artifact even without branch identifier." );
+                    results.addException( dependency, e2, args.nodes );
+                    return;
+                }
+            }
+            else
+            {
+                results.addException( dependency, e, args.nodes );
+                return;
+            }
         }
 
         for ( Version version : versions )
