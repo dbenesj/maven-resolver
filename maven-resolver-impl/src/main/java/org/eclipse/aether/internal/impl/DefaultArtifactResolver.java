@@ -39,6 +39,7 @@ import org.eclipse.aether.RequestTrace;
 import org.eclipse.aether.SyncContext;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.ArtifactProperties;
+import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.impl.ArtifactResolver;
 import org.eclipse.aether.impl.OfflineController;
 import org.eclipse.aether.impl.RemoteRepositoryManager;
@@ -103,6 +104,9 @@ public class DefaultArtifactResolver
     private SyncContextFactory syncContextFactory;
 
     private OfflineController offlineController;
+
+    private static final String BRANCH_GROUP_PREFIX = "branch.";
+    private static final String CW_GROUP_PREFIX = ".com.cogniware";
 
     public DefaultArtifactResolver()
     {
@@ -230,31 +234,115 @@ public class DefaultArtifactResolver
         }
     }
 
-    @SuppressWarnings( "checkstyle:methodlength" )
     private List<ArtifactResult> resolve( RepositorySystemSession session,
                                           Collection<? extends ArtifactRequest> requests )
         throws ArtifactResolutionException
     {
         List<ArtifactResult> results = new ArrayList<>( requests.size() );
-        boolean failures = false;
+        List<ResolutionGroup> groups = new ArrayList<>();
+        boolean failures = prepareRequests( session, requests, results, groups, false );
 
+        for ( ResolutionGroup group : groups )
+        {
+            performDownloads( session, group );
+        }
+
+        List<ArtifactResult> resultsNotRepeated = new ArrayList<>();
+        List<ArtifactResult> resultsWithoutBranch = new ArrayList<>();
+        List<ResolutionGroup> groupsWithoutBranch = new ArrayList<>();
+        List<ArtifactRequest> requestsWithoutBranch = new ArrayList<>();
+        
+        for ( ArtifactResult result : results )
+        {
+            ArtifactRequest request = result.getRequest();
+
+            Artifact artifact = result.getArtifact();
+            if ( artifact == null || artifact.getFile() == null )
+            {
+                if ( request.getArtifact().getGroupId().startsWith( BRANCH_GROUP_PREFIX ) )
+                {
+                    Artifact artWithoutBranch = new DefaultArtifact(
+                      request.getArtifact().getGroupId().substring(request.getArtifact().getGroupId().indexOf( CW_GROUP_PREFIX, BRANCH_GROUP_PREFIX.length()+1 )+1 ),
+                      request.getArtifact().getArtifactId(),
+                      request.getArtifact().getClassifier(),
+                      request.getArtifact().getExtension(),
+                      request.getArtifact().getVersion(),
+                      request.getArtifact().getProperties(),
+                      request.getArtifact().getFile()
+                      );
+                    LOGGER.info( "Failed to get artifact {} which is with the branch identifier, will try the same without identifier {}",
+                        request.getArtifact(), artWithoutBranch );
+                    requestsWithoutBranch.add(request.setArtifact(artWithoutBranch));
+                    continue;
+                }
+                failures = true;
+                if ( result.getExceptions().isEmpty() )
+                {
+                    Exception exception = new ArtifactNotFoundException( request.getArtifact(), null );
+                    result.addException( exception );
+                }
+                RequestTrace trace = RequestTrace.newChild( request.getTrace(), request );
+                artifactResolved( session, trace, request.getArtifact(), null, result.getExceptions() );
+            }
+            resultsNotRepeated.add(result);
+        }
+        
+        failures = prepareRequests( session, requestsWithoutBranch, resultsWithoutBranch, groupsWithoutBranch, failures );
+        for ( ResolutionGroup group : groupsWithoutBranch )
+        {
+            performDownloads( session, group );
+        }
+
+        for ( ArtifactResult result : resultsWithoutBranch )
+        {
+            ArtifactRequest request = result.getRequest();
+
+            Artifact artifact = result.getArtifact();
+            if ( artifact == null || artifact.getFile() == null )
+            {
+                failures = true;
+                if ( result.getExceptions().isEmpty() )
+                {
+                    Exception exception = new ArtifactNotFoundException( request.getArtifact(), null );
+                    result.addException( exception );
+                }
+                RequestTrace trace = RequestTrace.newChild( request.getTrace(), request );
+                artifactResolved( session, trace, request.getArtifact(), null, result.getExceptions() );
+            }
+        }
+        
+        resultsWithoutBranch.addAll(resultsNotRepeated);
+        if ( failures )
+        {
+            throw new ArtifactResolutionException( resultsWithoutBranch );
+        }
+
+        return resultsWithoutBranch;
+    }
+
+    @SuppressWarnings( "checkstyle:methodlength" )
+    private boolean prepareRequests( RepositorySystemSession session,
+                                     Collection<? extends ArtifactRequest> requests,
+                                     List<ArtifactResult> resultsToBeUpdated,
+                                     List<ResolutionGroup> groupsToBeUpdated,
+                                     boolean initialFailures ) {
+        boolean failures = initialFailures;
+  
         LocalRepositoryManager lrm = session.getLocalRepositoryManager();
         WorkspaceReader workspace = session.getWorkspaceReader();
-
-        List<ResolutionGroup> groups = new ArrayList<>();
-
+  
         for ( ArtifactRequest request : requests )
         {
             RequestTrace trace = RequestTrace.newChild( request.getTrace(), request );
-
+  
             ArtifactResult result = new ArtifactResult( request );
-            results.add( result );
-
+            resultsToBeUpdated.add( result );
+  
             Artifact artifact = request.getArtifact();
             List<RemoteRepository> repos = request.getRepositories();
-
+  
             artifactResolving( session, trace, artifact );
-
+  
             String localPath = artifact.getProperty( ArtifactProperties.LOCAL_PATH, null );
             if ( localPath != null )
             {
@@ -273,7 +361,7 @@ public class DefaultArtifactResolver
                 }
                 continue;
             }
-
+  
             VersionResult versionResult;
             try
             {
@@ -286,9 +374,9 @@ public class DefaultArtifactResolver
                 result.addException( e );
                 continue;
             }
-
+  
             artifact = artifact.setVersion( versionResult.getVersion() );
-
+  
             if ( versionResult.getRepository() != null )
             {
                 if ( versionResult.getRepository() instanceof RemoteRepository )
@@ -300,7 +388,7 @@ public class DefaultArtifactResolver
                     repos = Collections.emptyList();
                 }
             }
-
+  
             if ( workspace != null )
             {
                 File file = workspace.findArtifact( artifact );
@@ -313,7 +401,7 @@ public class DefaultArtifactResolver
                     continue;
                 }
             }
-
+  
             LocalArtifactResult local =
                 lrm.find( session, new LocalArtifactRequest( artifact, repos, request.getRequestContext() ) );
             if ( isLocallyInstalled( local, versionResult ) )
@@ -352,16 +440,16 @@ public class DefaultArtifactResolver
             {
                 LOGGER.debug( "Verifying availability of {} from {}", local.getFile(), repos );
             }
-
+  
             AtomicBoolean resolved = new AtomicBoolean( false );
-            Iterator<ResolutionGroup> groupIt = groups.iterator();
+            Iterator<ResolutionGroup> groupIt = groupsToBeUpdated.iterator();
             for ( RemoteRepository repo : repos )
             {
                 if ( !repo.getPolicy( artifact.isSnapshot() ).isEnabled() )
                 {
                     continue;
                 }
-
+  
                 try
                 {
                     Utils.checkOffline( session, offlineController, repo );
@@ -375,7 +463,7 @@ public class DefaultArtifactResolver
                     result.addException( exception );
                     continue;
                 }
-
+  
                 ResolutionGroup group = null;
                 while ( groupIt.hasNext() )
                 {
@@ -389,42 +477,14 @@ public class DefaultArtifactResolver
                 if ( group == null )
                 {
                     group = new ResolutionGroup( repo );
-                    groups.add( group );
+                    groupsToBeUpdated.add( group );
                     groupIt = Collections.<ResolutionGroup>emptyList().iterator();
                 }
                 group.items.add( new ResolutionItem( trace, artifact, resolved, result, local, repo ) );
             }
         }
 
-        for ( ResolutionGroup group : groups )
-        {
-            performDownloads( session, group );
-        }
-
-        for ( ArtifactResult result : results )
-        {
-            ArtifactRequest request = result.getRequest();
-
-            Artifact artifact = result.getArtifact();
-            if ( artifact == null || artifact.getFile() == null )
-            {
-                failures = true;
-                if ( result.getExceptions().isEmpty() )
-                {
-                    Exception exception = new ArtifactNotFoundException( request.getArtifact(), null );
-                    result.addException( exception );
-                }
-                RequestTrace trace = RequestTrace.newChild( request.getTrace(), request );
-                artifactResolved( session, trace, request.getArtifact(), null, result.getExceptions() );
-            }
-        }
-
-        if ( failures )
-        {
-            throw new ArtifactResolutionException( results );
-        }
-
-        return results;
+        return failures;
     }
 
     private boolean isLocallyInstalled( LocalArtifactResult lar, VersionResult vr )
